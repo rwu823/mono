@@ -1,0 +1,11 @@
+{
+  "defaultSeverity": "error",
+  "extends": [
+    "./packages/ts-base/tslint.json"
+  ],
+
+  "rules": {
+
+  },
+  "rulesDirectory": []
+}

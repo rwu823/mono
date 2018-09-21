@@ -1,0 +1,6 @@
+[submodule "packages/sh-exec"]
+	path = packages/sh-exec
+	url = git@github.com:rwu823/sh-exec.git
+[submodule "packages/ts-base"]
+	path = packages/ts-base
+	url = git@github.com:rwu823/ts-base.git

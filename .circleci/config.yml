@@ -1,0 +1,147 @@
+version: 2
+
+vars:
+  init: &init
+    environment:
+        TZ: Asia/Taipei
+    docker:
+      - image: circleci/node
+
+  save_node_modules:  &save_node_modules
+    save_cache:
+      key: node_modules#{{ checksum "package-lock.json" }}
+      paths:
+        - node_modules
+
+  restore_node_modules:  &restore_node_modules
+    restore_cache:
+      key: node_modules#{{ checksum "package-lock.json" }}
+
+  save_build:  &save_build
+    save_cache:
+      key: out#{{ .Revision }}
+      paths:
+        - out
+
+  restore_build:  &restore_build
+    restore_cache:
+      key: out#{{ .Revision }}
+
+  branch_not_deploy: &branch_not_deploy
+    filters:
+      branches:
+        ignore:
+          - master
+          - /^v\d{1,3}\./
+
+  branch_is_deploy: &branch_is_deploy
+    filters:
+      branches:
+        only:
+          - master
+
+  setup_docker: &setup_docker
+    setup_remote_docker:
+      docker_layer_caching: true
+
+  setup_npm: &setup_npm
+    run:
+      name: Setup NPM
+      command: echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+
+  setup_git: &setup_git
+    run:
+      name: Setup Git
+      command: |
+        git config --global user.name "CircleCI"
+        git config --global user.email "auto_deploy@circleci.com"
+
+  export_env: &export_env
+    run:
+      name: Export Env
+      command: |
+        echo 'export IMAGE=$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME:$CIRCLE_SHA1' >> $BASH_ENV
+        echo 'export GIT_TAG=v$(cat package.json | grep version | cut -d '\''"'\'' -f4)' >> $BASH_ENV
+        echo 'export GIT_REPO=https://$GH_TOKEN@github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME.git' >> $BASH_ENV
+
+        source $BASH_ENV
+
+        echo $IMAGE
+        echo $GIT_TAG
+
+  docker_build: &docker_build
+    run:
+      name: Docker build
+      command: |
+        docker build . -t $IMAGE
+        docker images $IMAGE
+        docker history $IMAGE
+
+  push_coverage: &push_coverage
+    run: curl -s https://codecov.io/bash | bash
+
+  setup_gcloud: &setup_gcloud
+    run:
+      name: Setup GCloud
+      command: |
+        export GCLOUD_SDK_VERSION=204
+        export GCLOUD_PROJECT=gcp-project-id
+        curl https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-$GCLOUD_SDK_VERSION.0.0-linux-x86_64.tar.gz -o ./gcloud-sdk.tar.gz
+        tar xzf gcloud-sdk.tar.gz -C ~
+        rm gcloud-sdk.tar.gz
+        export PATH=~/google-cloud-sdk/bin:$PATH
+        echo $GCLOUD_KEY | base64 --decode > ~/gcloud.key.json
+        gcloud components install kubectl
+        gcloud auth activate-service-account --key-file ~/gcloud.key.json
+        gcloud config set project $GCLOUD_PROJECT
+        gcloud container clusters get-credentials event-k8s --zone asia-northeast1-a
+
+        echo 'export IMAGE=gcr.io/$GCLOUD_PROJECT/www:$CIRCLE_SHA1' >> $BASH_ENV
+        echo 'export PATH=~/google-cloud-sdk/bin:$PATH' >> $BASH_ENV
+
+        source $BASH_ENV
+
+        echo $IMAGE
+jobs:
+  lint:
+    <<: *init
+    steps:
+      - checkout
+      - *restore_node_modules
+      - run: npm i
+      - *save_node_modules
+      - run: npm run lint
+
+  test:
+    <<: *init
+    steps:
+      - checkout
+      - *restore_node_modules
+      - run: npm i
+      - *save_node_modules
+      - run: npm test
+
+  github tags:
+    <<: *init
+    steps:
+      - checkout
+      - *setup_git
+      - *export_env
+      - run: git tag $GIT_TAG
+      - run: git push $GIT_REPO $GIT_TAG
+
+  npm publish:
+    <<: *init
+    steps:
+      - checkout
+      - *setup_npm
+      - run:
+          name: Create publish folder out/
+          command: mkdir out && cp -r bin package.json index.js out/
+      - run: npm publish out
+
+workflows:
+  version: 2
+  Testing:
+    jobs:
+      - lint
